@@ -23,12 +23,13 @@
   <div id="resultados"></div>
 
   <script>
-    // URL de la API REST oficial de ArcGIS / ENARGAS para estaciones de GNC
-    const ENARGAS_API = "https://sig.enargas.gov.ar/arcgis/rest/services/Publico/GNC/MapServer/0/query?where=1%3D1&outFields=RAZON_SOCI,DIRECCION,LOCALIDAD,PROVINCIA&outSR=4326&f=json";
+    // Usamos Corsproxy para saltar la restricción de seguridad entre GitHub y ENARGAS
+    const URL_ORIGINAL = "https://sig.enargas.gov.ar/arcgis/rest/services/Publico/GNC/MapServer/0/query?where=1%3D1&outFields=RAZON_SOCI,DIRECCION,LOCALIDAD,PROVINCIA&outSR=4326&f=json";
+    const ENARGAS_API = "https://corsproxy.io/?" + encodeURIComponent(URL_ORIGINAL);
 
     function obtenerUbicacion() {
       const contenedor = document.getElementById('resultados');
-      contenedor.innerHTML = "<p style='text-align:center;'>Consultando ubicación y base de datos...</p>";
+      contenedor.innerHTML = "<p style='text-align:center;'>Obteniendo tu ubicación y cargando estaciones...</p>";
 
       if (!navigator.geolocation) {
         contenedor.innerHTML = "<p>Tu navegador no soporta geolocalización.</p>";
@@ -42,14 +43,13 @@
           buscarEstaciones(latUser, lonUser);
         },
         (error) => {
-          contenedor.innerHTML = "<p>Error al obtener la ubicación. Verificá los permisos de GPS.</p>";
+          contenedor.innerHTML = "<p>Error al obtener ubicación. Por favor, activá el GPS y permití los permisos en tu navegador.</p>";
         }
       );
     }
 
-    // Fórmula de Haversine para calcular distancia entre dos puntos (en km)
     function calcularDistancia(lat1, lon1, lat2, lon2) {
-      const R = 6371; // Radio de la Tierra en km
+      const R = 6371; // Radio terrestre en km
       const dLat = (lat2 - lat1) * Math.PI / 180;
       const dLon = (lon2 - lon1) * Math.PI / 180;
       const a = Math.sin(dLat/2) * Math.sin(dLat/2) +
@@ -66,18 +66,17 @@
         const datos = await respuesta.json();
 
         if (!datos.features || datos.features.length === 0) {
-          contenedor.innerHTML = "<p>No se encontraron datos de ENARGAS.</p>";
+          contenedor.innerHTML = "<p>No se encontraron registros en el mapa de ENARGAS.</p>";
           return;
         }
 
-        // Procesar y calcular distancias
         let estaciones = datos.features.map(item => {
           const latEstacion = item.geometry.y;
           const lonEstacion = item.geometry.x;
           const dist = calcularDistancia(latUser, lonUser, latEstacion, lonEstacion);
           return {
             nombre: item.attributes.RAZON_SOCI || "Estación de GNC",
-            direccion: item.attributes.DIRECCION || "Dirección no informada",
+            direccion: item.attributes.DIRECCION || "Sin dirección",
             localidad: item.attributes.LOCALIDAD || "",
             lat: latEstacion,
             lon: lonEstacion,
@@ -85,10 +84,8 @@
           };
         });
 
-        // Ordenar por cercanía (de menor a mayor distancia)
         estaciones.sort((a, b) => a.distancia - b.distancia);
 
-        // Mostrar las 10 más cercanas
         const cercanas = estaciones.slice(0, 10);
         contenedor.innerHTML = "";
 
@@ -106,7 +103,7 @@
         });
 
       } catch (e) {
-        contenedor.innerHTML = "<p>Error de conexión con el servidor de ENARGAS.</p>";
+        contenedor.innerHTML = "<p>Error de conexión con la base del ENARGAS. Intentá de nuevo en unos momentos.</p>";
       }
     }
   </script>
