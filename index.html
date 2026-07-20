@@ -55,12 +55,34 @@
       return R * c;
     }
 
+    // Función para obtener nombre de la calle/intersección por coordenadas
+    async function obtenerDireccionCalle(lat, lon) {
+      try {
+        const res = await fetch(`https://nominatim.openstreetmap.org/reverse?format=json&lat=${lat}&lon=${lon}`);
+        const data = await res.json();
+        if (data && data.address) {
+          const calle = data.address.road || data.address.pedestrian || data.address.suburb || "";
+          const altura = data.address.house_number || "";
+          const ciudad = data.address.city || data.address.town || data.address.village || "";
+          return `${calle} ${altura} (${ciudad})`.trim();
+        }
+      } catch (e) {
+        return "Ver en mapa de Waze";
+      }
+      return "Ver en mapa de Waze";
+    }
+
     async function buscarGncProximas(lat, lon) {
       const contenedor = document.getElementById('resultados');
-      contenedor.innerHTML = "<p style='text-align:center;'>Consultando estaciones de GNC cercanas...</p>";
+      contenedor.innerHTML = "<p style='text-align:center;'>Consultando estaciones cercanas...</p>";
 
-      // Consulta Overpass API para buscar estaciones con combustible GNC / cng a 25km a la redonda
-      const query = `[out:json];node["amenity"="fuel"]["fuel:cng"="yes"](around:25000,${lat},${lon});out;`;
+      // Consulta ampliada: busca estaciones marcadas con GNC o que tengan "GNC" en el nombre a 15km
+      const query = `[out:json];
+        (
+          node["amenity"="fuel"]["fuel:cng"="yes"](around:15000,${lat},${lon});
+          node["amenity"="fuel"]["name"~"GNC",i](around:15000,${lat},${lon});
+        );
+        out;`;
       const url = "https://overpass-api.de/api/interpreter?data=" + encodeURIComponent(query);
 
       try {
@@ -68,28 +90,46 @@
         const datos = await respuesta.json();
 
         if (!datos.elements || datos.elements.length === 0) {
-          contenedor.innerHTML = "<p style='text-align:center;'>No se encontraron estaciones con GNC a menos de 25 km.</p>";
+          contenedor.innerHTML = "<p style='text-align:center;'>No se encontraron estaciones con GNC cercanas.</p>";
           return;
         }
 
-        let estaciones = datos.elements.map(item => {
+        // Eliminar duplicados si coinciden por ID
+        const elementosUnicos = Array.from(new Map(datos.elements.map(item => [item.id, item])).values());
+
+        let estaciones = elementosUnicos.map(item => {
           const dist = calcularDistancia(lat, lon, item.lat, item.lon);
           const marca = item.tags.brand || item.tags.operator || item.tags.name || "Estación de GNC";
-          const direccion = item.tags["addr:street"] ? `${item.tags["addr:street"]} ${item.tags["addr:housenumber"] || ""}` : "Ubicación sobre mapa";
           
+          let dirOriginal = "";
+          if (item.tags["addr:street"]) {
+            dirOriginal = `${item.tags["addr:street"]} ${item.tags["addr:housenumber"] || ""}`;
+          }
+
           return {
             nombre: marca,
-            direccion: direccion,
+            direccion: dirOriginal,
             lat: item.lat,
             lon: item.lon,
             distancia: dist
           };
         });
 
+        // Ordenar por distancia
         estaciones.sort((a, b) => a.distancia - b.distancia);
+        const cercanas = estaciones.slice(0, 8);
+
+        contenedor.innerHTML = "<p style='text-align:center;'>Obteniendo direcciones exactas...</p>";
+
+        // Resolver direcciones faltantes
+        for (let est of cercanas) {
+          if (!est.direccion || est.direccion === "") {
+            est.direccion = await obtenerDireccionCalle(est.lat, est.lon);
+          }
+        }
 
         contenedor.innerHTML = "";
-        estaciones.slice(0, 10).forEach(estacion => {
+        cercanas.forEach(estacion => {
           const urlWaze = `https://waze.com/ul?ll=${estacion.lat},${estacion.lon}&navigate=yes`;
           
           contenedor.innerHTML += `
@@ -103,7 +143,7 @@
         });
 
       } catch (error) {
-        contenedor.innerHTML = "<p style='text-align:center;'>Error al consultar el servicio de mapas. Reintentá en unos segundos.</p>";
+        contenedor.innerHTML = "<p style='text-align:center;'>Error de conexión al consultar el mapa. Reintentá en unos segundos.</p>";
       }
     }
   </script>
