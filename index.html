@@ -1,0 +1,114 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Buscador de GNC Cercano</title>
+  <style>
+    body { font-family: sans-serif; background: #f4f4f9; padding: 15px; margin: 0; }
+    h1 { text-align: center; color: #1a365d; font-size: 1.4rem; }
+    .btn-buscar { display: block; width: 100%; padding: 15px; background: #0070f3; color: white; border: none; border-radius: 8px; font-size: 1.1rem; font-weight: bold; margin-bottom: 20px; cursor: pointer; }
+    .estacion { background: white; border-radius: 8px; padding: 15px; margin-bottom: 12px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }
+    .estacion h3 { margin: 0 0 5px 0; color: #2d3748; font-size: 1rem; }
+    .estacion p { margin: 3px 0; color: #4a5568; font-size: 0.9rem; }
+    .distancia { font-weight: bold; color: #e53e3e; }
+    .btn-waze { display: inline-block; margin-top: 10px; width: 100%; text-align: center; padding: 10px 0; background: #33ccff; color: #000; text-decoration: none; border-radius: 6px; font-weight: bold; box-sizing: border-box; }
+  </style>
+</head>
+<body>
+
+  <h1>⛽ Estaciones de GNC Cercanas</h1>
+  <button class="btn-buscar" onclick="obtenerUbicacion()">🔍 Buscar GNC más cercana</button>
+
+  <div id="resultados"></div>
+
+  <script>
+    // URL de la API REST oficial de ArcGIS / ENARGAS para estaciones de GNC
+    const ENARGAS_API = "https://sig.enargas.gov.ar/arcgis/rest/services/Publico/GNC/MapServer/0/query?where=1%3D1&outFields=RAZON_SOCI,DIRECCION,LOCALIDAD,PROVINCIA&outSR=4326&f=json";
+
+    function obtenerUbicacion() {
+      const contenedor = document.getElementById('resultados');
+      contenedor.innerHTML = "<p style='text-align:center;'>Consultando ubicación y base de datos...</p>";
+
+      if (!navigator.geolocation) {
+        contenedor.innerHTML = "<p>Tu navegador no soporta geolocalización.</p>";
+        return;
+      }
+
+      navigator.geolocation.getCurrentPosition(
+        (posicion) => {
+          const latUser = posicion.coords.latitude;
+          const lonUser = posicion.coords.longitude;
+          buscarEstaciones(latUser, lonUser);
+        },
+        (error) => {
+          contenedor.innerHTML = "<p>Error al obtener la ubicación. Verificá los permisos de GPS.</p>";
+        }
+      );
+    }
+
+    // Fórmula de Haversine para calcular distancia entre dos puntos (en km)
+    function calcularDistancia(lat1, lon1, lat2, lon2) {
+      const R = 6371; // Radio de la Tierra en km
+      const dLat = (lat2 - lat1) * Math.PI / 180;
+      const dLon = (lon2 - lon1) * Math.PI / 180;
+      const a = Math.sin(dLat/2) * Math.sin(dLat/2) +
+                Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) *
+                Math.sin(dLon/2) * Math.sin(dLon/2);
+      const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+      return R * c;
+    }
+
+    async function buscarEstaciones(latUser, lonUser) {
+      const contenedor = document.getElementById('resultados');
+      try {
+        const respuesta = await fetch(ENARGAS_API);
+        const datos = await respuesta.json();
+
+        if (!datos.features || datos.features.length === 0) {
+          contenedor.innerHTML = "<p>No se encontraron datos de ENARGAS.</p>";
+          return;
+        }
+
+        // Procesar y calcular distancias
+        let estaciones = datos.features.map(item => {
+          const latEstacion = item.geometry.y;
+          const lonEstacion = item.geometry.x;
+          const dist = calcularDistancia(latUser, lonUser, latEstacion, lonEstacion);
+          return {
+            nombre: item.attributes.RAZON_SOCI || "Estación de GNC",
+            direccion: item.attributes.DIRECCION || "Dirección no informada",
+            localidad: item.attributes.LOCALIDAD || "",
+            lat: latEstacion,
+            lon: lonEstacion,
+            distancia: dist
+          };
+        });
+
+        // Ordenar por cercanía (de menor a mayor distancia)
+        estaciones.sort((a, b) => a.distancia - b.distancia);
+
+        // Mostrar las 10 más cercanas
+        const cercanas = estaciones.slice(0, 10);
+        contenedor.innerHTML = "";
+
+        cercanas.forEach(estacion => {
+          const urlWaze = `https://waze.com/ul?ll=${estacion.lat},${estacion.lon}&navigate=yes`;
+          
+          contenedor.innerHTML += `
+            <div class="estacion">
+              <h3>${estacion.nombre}</h3>
+              <p>📍 ${estacion.direccion}, ${estacion.localidad}</p>
+              <p class="distancia">📏 A ${estacion.distancia.toFixed(2)} km de tu posición</p>
+              <a class="btn-waze" href="${urlWaze}" target="_blank">🚙 Abrir en Waze</a>
+            </div>
+          `;
+        });
+
+      } catch (e) {
+        contenedor.innerHTML = "<p>Error de conexión con el servidor de ENARGAS.</p>";
+      }
+    }
+  </script>
+</body>
+</html>
