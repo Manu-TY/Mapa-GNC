@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Buscador de GNC Cercano</title>
+  <title>GNC Oficial ENARGAS</title>
   <style>
     body { font-family: sans-serif; background: #f4f4f9; padding: 15px; margin: 0; }
     h1 { text-align: center; color: #1a365d; font-size: 1.4rem; }
@@ -17,15 +17,15 @@
 </head>
 <body>
 
-  <h1>⛽ Estaciones de GNC Cercanas</h1>
-  <button class="btn-buscar" onclick="obtenerUbicacion()">🔍 Buscar GNC más cercana</button>
+  <h1>⛽ GNC Oficial ENARGAS</h1>
+  <button class="btn-buscar" onclick="obtenerUbicacion()">🔍 Buscar GNC Oficiales Cercanas</button>
 
   <div id="resultados"></div>
 
   <script>
     function obtenerUbicacion() {
       const contenedor = document.getElementById('resultados');
-      contenedor.innerHTML = "<p style='text-align:center;'>Buscando tu posición GPS...</p>";
+      contenedor.innerHTML = "<p style='text-align:center;'>Obteniendo tu posición GPS...</p>";
 
       if (!navigator.geolocation) {
         contenedor.innerHTML = "<p>Tu navegador no soporta geolocalización.</p>";
@@ -36,10 +36,10 @@
         (posicion) => {
           const lat = posicion.coords.latitude;
           const lon = posicion.coords.longitude;
-          buscarGncProximas(lat, lon);
+          consultarEnargasOficial(lat, lon);
         },
         (error) => {
-          contenedor.innerHTML = "<p>Error al obtener ubicación. Asegurate de activar el GPS y dar permisos al navegador.</p>";
+          contenedor.innerHTML = "<p>Error de GPS. Activá la ubicación en tu celular.</p>";
         }
       );
     }
@@ -55,87 +55,63 @@
       return R * c;
     }
 
-    // Función para obtener nombre de la calle/intersección por coordenadas
-    async function obtenerDireccionCalle(lat, lon) {
-      try {
-        const res = await fetch(`https://nominatim.openstreetmap.org/reverse?format=json&lat=${lat}&lon=${lon}`);
-        const data = await res.json();
-        if (data && data.address) {
-          const calle = data.address.road || data.address.pedestrian || data.address.suburb || "";
-          const altura = data.address.house_number || "";
-          const ciudad = data.address.city || data.address.town || data.address.village || "";
-          return `${calle} ${altura} (${ciudad})`.trim();
-        }
-      } catch (e) {
-        return "Ver en mapa de Waze";
-      }
-      return "Ver en mapa de Waze";
-    }
-
-    async function buscarGncProximas(lat, lon) {
+    async function consultarEnargasOficial(lat, lon) {
       const contenedor = document.getElementById('resultados');
-      contenedor.innerHTML = "<p style='text-align:center;'>Consultando estaciones cercanas...</p>";
+      contenedor.innerHTML = "<p style='text-align:center;'>Consultando base oficial de ENARGAS...</p>";
 
-      // Consulta ampliada: busca estaciones marcadas con GNC o que tengan "GNC" en el nombre a 15km
-      const query = `[out:json];
-        (
-          node["amenity"="fuel"]["fuel:cng"="yes"](around:15000,${lat},${lon});
-          node["amenity"="fuel"]["name"~"GNC",i](around:15000,${lat},${lon});
-        );
-        out;`;
-      const url = "https://overpass-api.de/api/interpreter?data=" + encodeURIComponent(query);
+      // Ampliamos la ventana de búsqueda a ~8 km a la redonda
+      const delta = 0.08; 
+      const minLon = lon - delta;
+      const minLat = lat - delta;
+      const maxLon = lon + delta;
+      const maxLat = lat + delta;
+
+      const urlArcGIS = `https://sig.enargas.gov.ar/arcgis/rest/services/Publico/GNC/MapServer/0/query?geometry=${minLon},${minLat},${maxLon},${maxLat}&geometryType=esriGeometryEnvelope&inSR=4326&spatialRel=esriSpatialRelIntersects&outFields=*&outSR=4326&f=json`;
+
+      const urlFinal = "https://corsproxy.io/?" + encodeURIComponent(urlArcGIS);
 
       try {
-        const respuesta = await fetch(url);
+        const respuesta = await fetch(urlFinal);
         const datos = await respuesta.json();
 
-        if (!datos.elements || datos.elements.length === 0) {
-          contenedor.innerHTML = "<p style='text-align:center;'>No se encontraron estaciones con GNC cercanas.</p>";
+        if (!datos.features || datos.features.length === 0) {
+          contenedor.innerHTML = "<p style='text-align:center;'>No se encontraron estaciones oficiales a la redonda.</p>";
           return;
         }
 
-        // Eliminar duplicados si coinciden por ID
-        const elementosUnicos = Array.from(new Map(datos.elements.map(item => [item.id, item])).values());
+        let estaciones = datos.features.map(item => {
+          const latEstacion = item.geometry.y;
+          const lonEstacion = item.geometry.x;
+          const dist = calcularDistancia(lat, lon, latEstacion, lonEstacion);
 
-        let estaciones = elementosUnicos.map(item => {
-          const dist = calcularDistancia(lat, lon, item.lat, item.lon);
-          const marca = item.tags.brand || item.tags.operator || item.tags.name || "Estación de GNC";
-          
-          let dirOriginal = "";
-          if (item.tags["addr:street"]) {
-            dirOriginal = `${item.tags["addr:street"]} ${item.tags["addr:housenumber"] || ""}`;
-          }
+          const attrs = item.attributes;
+          const razonSocial = attrs.RAZON_SOCI || attrs.BANDERA || "Estación de GNC Habilitada";
+          const direccion = attrs.DIRECCION || "Dirección registrada en ENARGAS";
+          const localidad = attrs.LOCALIDAD || attrs.PARTIDO || "";
 
           return {
-            nombre: marca,
-            direccion: dirOriginal,
-            lat: item.lat,
-            lon: item.lon,
+            nombre: razonSocial,
+            direccion: direccion,
+            localidad: localidad,
+            lat: latEstacion,
+            lon: lonEstacion,
             distancia: dist
           };
         });
 
-        // Ordenar por distancia
+        // Ordenar de más cercana a más lejana
         estaciones.sort((a, b) => a.distancia - b.distancia);
-        const cercanas = estaciones.slice(0, 8);
-
-        contenedor.innerHTML = "<p style='text-align:center;'>Obteniendo direcciones exactas...</p>";
-
-        // Resolver direcciones faltantes
-        for (let est of cercanas) {
-          if (!est.direccion || est.direccion === "") {
-            est.direccion = await obtenerDireccionCalle(est.lat, est.lon);
-          }
-        }
 
         contenedor.innerHTML = "";
-        cercanas.forEach(estacion => {
+        
+        // Muestra las 12 más cercanas
+        estaciones.slice(0, 12).forEach(estacion => {
           const urlWaze = `https://waze.com/ul?ll=${estacion.lat},${estacion.lon}&navigate=yes`;
           
           contenedor.innerHTML += `
             <div class="estacion">
               <h3>⛽ ${estacion.nombre}</h3>
-              <p>📍 ${estacion.direccion}</p>
+              <p>📍 ${estacion.direccion} ${estacion.localidad ? '(' + estacion.localidad + ')' : ''}</p>
               <p class="distancia">📏 A ${estacion.distancia.toFixed(2)} km de tu posición</p>
               <a class="btn-waze" href="${urlWaze}" target="_blank">🚙 Abrir en Waze</a>
             </div>
@@ -143,7 +119,7 @@
         });
 
       } catch (error) {
-        contenedor.innerHTML = "<p style='text-align:center;'>Error de conexión al consultar el mapa. Reintentá en unos segundos.</p>";
+        contenedor.innerHTML = "<p style='text-align:center;'>Error al conectar con ENARGAS. Reintentá en unos segundos.</p>";
       }
     }
   </script>
