@@ -20,8 +20,8 @@
 </head>
 <body>
 
-  <h1>⛽ Estaciones GNC - Registro ENARGAS</h1>
-  <button class="btn-buscar" onclick="obtenerUbicacion()">🔍 Buscar Estaciones ENARGAS Cercanas</button>
+  <h1>⛽ Estaciones GNC - Registro Oficial ENARGAS</h1>
+  <button class="btn-buscar" onclick="obtenerUbicacion()">🔍 Buscar en ENARGAS Cercanas</button>
 
   <div id="resultados"></div>
 
@@ -37,7 +37,7 @@
 
       navigator.geolocation.getCurrentPosition(
         (pos) => {
-          consultarEnargas(pos.coords.latitude, pos.coords.longitude);
+          consultarEnargasOficial(pos.coords.latitude, pos.coords.longitude);
         },
         () => {
           contenedor.innerHTML = "<p style='text-align:center;'>Error al obtener GPS. Activa la ubicación en tu celular.</p>";
@@ -55,21 +55,20 @@
       return R * (2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a)));
     }
 
-    async function consultarEnargas(latUser, lonUser) {
+    async function consultarEnargasOficial(latUser, lonUser) {
       const contenedor = document.getElementById('resultados');
       contenedor.innerHTML = "<p style='text-align:center;'>Consultando base oficial de ENARGAS...</p>";
 
-      // Definimos un recuadro (envelope) aproximado de ~8km alrededor de tu posición actual
+      // Rango espacial centrado en tu GPS (~8km a la redonda)
       const delta = 0.08; 
       const minLon = lonUser - delta;
       const minLat = latUser - delta;
       const maxLon = lonUser + delta;
       const maxLat = latUser + delta;
 
-      // URL del servidor ArcGIS oficial de ENARGAS (Capa GNC)
-      const urlEnargas = `https://sig.enargas.gov.ar/arcgis/rest/services/Publico/GNC/MapServer/0/query?geometry=${minLon},${minLat},${maxLon},${maxLat}&geometryType=esriGeometryEnvelope&inSR=4326&spatialRel=esriSpatialRelIntersects&outFields=*&outSR=4326&f=json`;
+      // URL OFICIAL Y ACTUALIZADA DE ENARGAS (Servidor ArcGIS / Enargas_int / GNC)
+      const urlEnargas = `https://sig.enargas.gov.ar/arcgis/rest/services/Enargas_int/GNC/MapServer/0/query?geometry=${minLon},${minLat},${maxLon},${maxLat}&geometryType=esriGeometryEnvelope&inSR=4326&spatialRel=esriSpatialRelIntersects&outFields=*&outSR=4326&f=json`;
       
-      // Usamos proxy seguro para evitar el bloqueo CORS del navegador
       const urlFinal = "https://corsproxy.io/?" + encodeURIComponent(urlEnargas);
 
       try {
@@ -77,36 +76,36 @@
         const datos = await respuesta.json();
 
         if (!datos.features || datos.features.length === 0) {
-          contenedor.innerHTML = "<p style='text-align:center;'>No se encontraron estaciones oficiales de ENARGAS en la zona cercana.</p>";
+          contenedor.innerHTML = "<p style='text-align:center;'>No se encontraron estaciones oficiales de ENARGAS en este radio.</p>";
           return;
         }
 
         let estaciones = datos.features.map(item => {
-          // El servidor ArcGIS devuelve las coordenadas invertidas en .geometry (x = lon, y = lat)
           const latEstacion = item.geometry.y;
           const lonEstacion = item.geometry.x;
           const dist = calcularDistancia(latUser, lonUser, latEstacion, lonEstacion);
 
           const attrs = item.attributes;
-          const nombre = attrs.RAZON_SOCI || attrs.BANDERA || "Estación GNC Oficial";
-          const direccion = attrs.DIRECCION || "Dirección oficial ENARGAS";
-          const localidad = attrs.LOCALIDAD || attrs.PARTIDO || "";
+          // Mapeo adaptado a los campos reales del registro de ENARGAS
+          const nombre = attrs.RazonSocial || attrs.RAZON_SOCI || attrs.Bandera || attrs.BANDERA || "Estación GNC Oficial";
+          const direccion = attrs.Direccion || attrs.DIRECCION || "Dirección oficial";
+          const localidad = attrs.Localidad || attrs.LOCALIDAD || attrs.Partido || "";
 
           return {
             nombre: nombre,
-            direccion: `${direccion} (${localidad})`,
+            direccion: `${direccion} ${localidad ? '(' + localidad + ')' : ''}`,
             lat: latEstacion,
             lon: lonEstacion,
             distancia: dist
           };
         });
 
-        // Ordenar estrictamente por la menor distancia a tu GPS
+        // Ordenar estrictamente de menor a mayor distancia
         estaciones.sort((a, b) => a.distancia - b.distancia);
 
         contenedor.innerHTML = "";
 
-        // Mostramos las estaciones oficiales más cercanas
+        // Renderizar las 10 estaciones más cercanas de ENARGAS
         estaciones.slice(0, 10).forEach(est => {
           const urlWaze = `https://waze.com/ul?ll=${est.lat},${est.lon}&navigate=yes`;
           const urlMaps = `https://www.google.com/maps/search/?api=1&query=${est.lat},${est.lon}`;
@@ -125,7 +124,7 @@
         });
 
       } catch (e) {
-        contenedor.innerHTML = "<p style='text-align:center;'>Error al conectar con el servidor de ENARGAS. Reintentá en unos segundos.</p>";
+        contenedor.innerHTML = "<p style='text-align:center;'>Error de conexión con ENARGAS. Reintentá en unos segundos.</p>";
       }
     }
   </script>
